@@ -1,0 +1,15 @@
+﻿Cover HA Overlay is a lightweight, privacy-first open-source utility designed specifically for Samsung Galaxy Z Flip (Flip5, Flip6, Flip7) foldable devices.
+
+It places an always-accessible, floating quick-control bar directly on your outer cover screen (Flex Window). Control lights, door locks, switches, curtains, and automations without opening your phone or waiting for full-screen apps to load.
+
+Key Features:
+- Instant Zero-Latency Actions: Background REST API dispatch in ~100ms with zero Activity popups.
+- Locked Cover Screen Support: Trigger smart home actions directly from your locked cover screen.
+- True Touch Passthrough: Fully interacts with native Samsung widgets and clock without interception.
+- Smart Safety Guards: Conditional execution based on Home Assistant binary sensors and double-tap confirmation for door locks.
+- End-to-End Local Security: Hardware-backed Android Keystore AES-256-GCM encryption with zero cloud intermediaries.
+- Zero Idle Drain: Automatically disconnects WebSockets when the cover display sleeps for 0% CPU consumption.
+
+Permissions:
+- Draw Over Other Apps (SYSTEM_ALERT_WINDOW): Required to render the floating quick-control bar on the secondary display.
+- Unrestricted Battery: Required to prevent One UI from killing the background service.

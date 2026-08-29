@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Cover HA Overlay</string>
+    <string name="notification_channel_name">Cover Screen Overlay</string>
+    <string name="notification_channel_desc">Keeps the Home Assistant quick-control overlay active on the cover display</string>
+    <string name="notification_title">Cover Screen HA Overlay Active</string>
+    <string name="notification_text">Quick controls ready on cover display</string>
+    <string name="action_settings">Settings</string>
+    <string name="action_stop">Stop</string>
+    <string name="action_restart">Restart</string>
+</resources>

@@ -1,0 +1,74 @@
+package com.haoverlay.coverscreen.network
+
+import android.util.Log
+import com.haoverlay.coverscreen.data.model.HaEntityState
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+
+/**
+ * Periodically polls the state of active overlay entities when WebSocket is disabled or reconnecting.
+ */
+class StatePollingManager(
+    private val client: HomeAssistantClient,
+    private val scope: CoroutineScope
+) {
+    private var pollingJob: Job? = null
+    private var entityIdsToPoll: List<String> = emptyList()
+    private var pollIntervalMs: Long = 10_000L
+    private var isPollingActive = false
+
+    private val _polledStateUpdates = MutableSharedFlow<HaEntityState>(extraBufferCapacity = 32)
+    val polledStateUpdates: SharedFlow<HaEntityState> = _polledStateUpdates.asSharedFlow()
+
+    fun updateTrackedEntities(entityIds: List<String>, intervalSeconds: Int) {
+        this.entityIdsToPoll = entityIds.filter { it.isNotBlank() }.distinct()
+        this.pollIntervalMs = (intervalSeconds.coerceAtLeast(3) * 1000).toLong()
+        if (isPollingActive) {
+            restartPolling()
+        }
+    }
+
+    fun startPolling() {
+        isPollingActive = true
+        restartPolling()
+    }
+
+    fun stopPolling() {
+        isPollingActive = false
+        pollingJob?.cancel()
+        pollingJob = null
+    }
+
+    private fun restartPolling() {
+        pollingJob?.cancel()
+        if (!isPollingActive || entityIdsToPoll.isEmpty()) return
+
+        pollingJob = scope.launch(Dispatchers.IO) {
+            while (isActive && isPollingActive) {
+                for (entityId in entityIdsToPoll) {
+                    if (!isActive) break
+                    when (val result = client.fetchEntityState(entityId)) {
+                        is HaResult.Success -> {
+                            _polledStateUpdates.tryEmit(result.data)
+                        }
+                        is HaResult.Error -> {
+                            Log.w(TAG, "Failed to poll state for $entityId: ${result.message}")
+                        }
+                    }
+                }
+                delay(pollIntervalMs)
+            }
+        }
+    }
+
+    companion object {
+        private const val TAG = "StatePollingManager"
+    }
+}
