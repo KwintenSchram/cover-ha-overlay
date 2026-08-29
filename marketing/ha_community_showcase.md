@@ -31,8 +31,9 @@ It renders a compact, translucent floating quick-control bar directly on the Sam
 ---
 
 ### 📦 Download & Open Source
-- **GitHub**: `https://github.com/your-username/cover-ha-overlay`
+- **GitHub**: `https://github.com/KwintenSchram/cover-ha-overlay`
 - **F-Droid**: Coming soon (Recipe submitted!)
 - **Direct APK**: Download the latest release from the GitHub Releases tab.
 
 Would love to hear your feedback, feature ideas, and what entities you'd put on your cover screen!
+

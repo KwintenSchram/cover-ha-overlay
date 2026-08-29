@@ -19,4 +19,5 @@ Here’s how it works 👇🧵
 📦 100% Open Source (Apache 2.0)
 
 Grab the APK or check the code on GitHub:
-👉 https://github.com/your-username/cover-ha-overlay
+👉 https://github.com/KwintenSchram/cover-ha-overlay
+

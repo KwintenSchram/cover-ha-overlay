@@ -16,4 +16,5 @@ I built **Cover HA Overlay** — an open-source floating widget for the cover di
 - It only takes up the space of the buttons so all your existing cover widgets and clock remain 100% interactive.
 
 It's free, open-source, and has zero ads or trackers:
-**GitHub**: https://github.com/your-username/cover-ha-overlay
+**GitHub**: https://github.com/KwintenSchram/cover-ha-overlay
+

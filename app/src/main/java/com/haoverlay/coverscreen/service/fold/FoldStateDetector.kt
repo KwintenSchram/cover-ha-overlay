@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.PowerManager
 import android.util.Log
 import android.view.Display
+import androidx.core.content.ContextCompat
 import com.haoverlay.coverscreen.service.display.CoverDisplayManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -94,11 +95,12 @@ class FoldStateDetector(
             addAction(Intent.ACTION_USER_PRESENT)
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            context.registerReceiver(broadcastReceiver, filter, Context.RECEIVER_EXPORTED)
-        } else {
-            context.registerReceiver(broadcastReceiver, filter)
-        }
+        ContextCompat.registerReceiver(
+            context,
+            broadcastReceiver,
+            filter,
+            ContextCompat.RECEIVER_EXPORTED
+        )
 
         displayManager.registerDisplayListener(displayListener, null)
         evaluateCurrentState()

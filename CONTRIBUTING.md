@@ -11,7 +11,7 @@ Thank you for your interest in contributing!
 
 2. **Clone & Build**:
    ```bash
-   git clone https://github.com/your-username/cover-ha-overlay.git
+   git clone https://github.com/KwintenSchram/cover-ha-overlay.git
    cd cover-ha-overlay
    ./gradlew assembleDebug
    ```
@@ -25,3 +25,4 @@ Thank you for your interest in contributing!
    - Ensure all automated unit tests pass before opening a PR.
    - Maintain strict `WRAP_CONTENT` bounds on the overlay and preserve zero-activity background execution.
    - Follow Kotlin official style guidelines.
+

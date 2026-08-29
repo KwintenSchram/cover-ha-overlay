@@ -2,9 +2,9 @@
   - System
   - Utility
 License: Apache-2.0
-WebSite: https://github.com/your-username/cover-ha-overlay
-SourceCode: https://github.com/your-username/cover-ha-overlay
-IssueTracker: https://github.com/your-username/cover-ha-overlay/issues
+WebSite: https://github.com/KwintenSchram/cover-ha-overlay
+SourceCode: https://github.com/KwintenSchram/cover-ha-overlay
+IssueTracker: https://github.com/KwintenSchram/cover-ha-overlay/issues
 
 AutoName: Cover HA Overlay
 Summary: Home Assistant quick controls on Samsung Galaxy Z Flip cover screen
@@ -14,7 +14,7 @@ Description: |-
   display of Samsung Galaxy Z Flip foldables.
 
 RepoType: git
-Repo: https://github.com/your-username/cover-ha-overlay.git
+Repo: https://github.com/KwintenSchram/cover-ha-overlay.git
 
 Builds:
   - versionName: 1.0.0
@@ -28,3 +28,4 @@ AutoUpdateMode: Version v%v
 UpdateCheckMode: Tags
 CurrentVersion: 1.0.0
 CurrentVersionCode: 1
+

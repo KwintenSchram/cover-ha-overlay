@@ -19,7 +19,8 @@ I built a native, lightweight open-source Android app: **Cover HA Overlay**.
 
 The app is completely open source under Apache 2.0 and has zero analytics/trackers.
 
-**GitHub & APK**: https://github.com/your-username/cover-ha-overlay
+**GitHub & APK**: https://github.com/KwintenSchram/cover-ha-overlay
 (F-Droid package is in review)
 
 Let me know what you think or if you'd like to see specific entity types supported!
+

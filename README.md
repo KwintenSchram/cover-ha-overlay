@@ -1,8 +1,8 @@
 # Cover Screen Home Assistant Quick-Control Overlay
 
-[![Android CI](https://github.com/your-username/cover-ha-overlay/actions/workflows/ci.yml/badge.svg)](https://github.com/your-username/cover-ha-overlay/actions)
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![F-Droid](https://img.shields.io/badge/F--Droid-Ready-brightgreen.svg)](fdroid_recipe/)
+[![Android CI](https://github.com/KwintenSchram/cover-ha-overlay/actions/workflows/ci.yml/badge.svg)](https://github.com/KwintenSchram/cover-ha-overlay/actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![F-Droid](https://img.shields.io/badge/F--Droid-Ready-brightgreen.svg)](fdroid_recipe/com.haoverlay.coverscreen.yml)
 [![Target SDK](https://img.shields.io/badge/API-26%2B%20(Target%2034)-orange.svg)](https://developer.android.com)
 
 A lightweight, security-hardened, zero-latency native Android application engineered specifically for **Samsung Galaxy Z Flip** foldable devices (**Galaxy Z Flip7, Flip6, Flip5, Flip4, Flip3**).
