@@ -1,4 +1,4 @@
-﻿package com.haoverlay.coverscreen.service.display
+package com.haoverlay.coverscreen.service.display
 
 import android.content.Context
 import android.graphics.Point
@@ -10,6 +10,7 @@ import io.mockk.mockk
 import org.junit.Before
 import org.junit.Test
 
+@Suppress("DEPRECATION")
 class CoverDisplayManagerTest {
 
     private lateinit var context: Context
