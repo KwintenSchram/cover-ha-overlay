@@ -96,6 +96,79 @@ class MainActivity : ComponentActivity() {
 
     private fun handleConfigIntent(intent: Intent?) {
         intent ?: return
+
+        var jsonStr: String? = null
+        val filePath = intent.getStringExtra("config_file") ?: "/data/local/tmp/restore_config.json"
+        val file = java.io.File(filePath)
+        if (file.exists() && file.canRead()) {
+            try {
+                jsonStr = file.readText(Charsets.UTF_8)
+            } catch (e: Exception) {
+                android.util.Log.e("MainActivity", "Failed to read config file", e)
+            }
+        }
+
+        if (jsonStr.isNullOrBlank()) {
+            val base64Config = intent.getStringExtra("config_base64")
+            if (!base64Config.isNullOrBlank()) {
+                try {
+                    jsonStr = String(android.util.Base64.decode(base64Config, android.util.Base64.DEFAULT), Charsets.UTF_8)
+                } catch (e: Exception) {
+                    android.util.Log.e("MainActivity", "Failed to decode base64 config", e)
+                }
+            }
+        }
+
+        if (!jsonStr.isNullOrBlank()) {
+            try {
+                val root = com.google.gson.JsonParser.parseString(jsonStr).asJsonObject
+                if (root.has("haConfig")) {
+                    val elem = root.get("haConfig")
+                    val ha: HaConfig? = if (elem.isJsonObject) {
+                        com.google.gson.Gson().fromJson(elem, HaConfig::class.java)
+                    } else if (elem.isJsonPrimitive) {
+                        com.google.gson.Gson().fromJson(elem.asString, HaConfig::class.java)
+                    } else null
+                    ha?.let {
+                        configManager.saveHaConfig(it)
+                        android.util.Log.d("MainActivity", "Restored haConfig: ${it.baseUrl}")
+                    }
+                }
+                if (root.has("buttons")) {
+                    val elem = root.get("buttons")
+                    val listType = object : com.google.gson.reflect.TypeToken<List<OverlayButtonConfig>>() {}.type
+                    val list: List<OverlayButtonConfig>? = if (elem.isJsonArray) {
+                        com.google.gson.Gson().fromJson(elem, listType)
+                    } else if (elem.isJsonPrimitive) {
+                        com.google.gson.Gson().fromJson(elem.asString, listType)
+                    } else null
+                    if (!list.isNullOrEmpty()) {
+                        configManager.saveButtons(list)
+                        android.util.Log.d("MainActivity", "Restored ${list.size} buttons")
+                    }
+                }
+                if (root.has("settings")) {
+                    val elem = root.get("settings")
+                    val s: OverlaySettings? = if (elem.isJsonObject) {
+                        com.google.gson.Gson().fromJson(elem, OverlaySettings::class.java)
+                    } else if (elem.isJsonPrimitive) {
+                        com.google.gson.Gson().fromJson(elem.asString, OverlaySettings::class.java)
+                    } else null
+                    s?.let {
+                        configManager.saveOverlaySettings(it.copy(isServiceEnabled = true))
+                        android.util.Log.d("MainActivity", "Restored settings")
+                    }
+                } else {
+                    configManager.setServiceEnabled(true)
+                }
+                CoverOverlayService.start(this)
+                Toast.makeText(this, "Configuration restored successfully", Toast.LENGTH_SHORT).show()
+                return
+            } catch (e: Exception) {
+                android.util.Log.e("MainActivity", "Failed to parse json config", e)
+            }
+        }
+
         val url = intent.getStringExtra("config_ha_url")
         val token = intent.getStringExtra("config_ha_token")
         if (!url.isNullOrBlank() && !token.isNullOrBlank()) {
