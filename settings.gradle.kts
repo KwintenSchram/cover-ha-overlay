@@ -11,6 +11,18 @@ pluginManagement {
         gradlePluginPortal()
     }
 }
+
+plugins {
+    id("com.gradle.develocity") version "3.19.2"
+}
+
+develocity {
+    buildScan {
+        termsOfUseUrl.set("https://gradle.com/terms-of-service")
+        termsOfUseAgree.set("yes")
+        publishing.onlyIf { System.getenv("CI") != null }
+    }
+}
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
