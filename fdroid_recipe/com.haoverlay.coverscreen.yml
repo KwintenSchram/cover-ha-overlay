@@ -1,7 +1,9 @@
-﻿Categories:
+Categories:
   - System
+  - Connectivity
   - Utility
-License: Apache-2.0
+License: MIT
+AuthorName: Kwinten Schram
 WebSite: https://github.com/KwintenSchram/cover-ha-overlay
 SourceCode: https://github.com/KwintenSchram/cover-ha-overlay
 IssueTracker: https://github.com/KwintenSchram/cover-ha-overlay/issues
