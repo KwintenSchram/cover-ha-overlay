@@ -1,4 +1,4 @@
-﻿# Built application files
+# Built application files
 *.apk
 *.aar
 *.ap_
@@ -61,3 +61,6 @@ Thumbs.db
 ha_access_instructions.md
 *.env
 *.private.json
+
+# Local marketing materials & video recordings
+marketing/
