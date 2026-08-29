@@ -72,6 +72,8 @@ class MainActivity : ComponentActivity() {
         coverDisplayManager = CoverDisplayManager(this)
         coverDisplayManager.start()
 
+        handleConfigIntent(intent)
+
         setContent {
             CoverOverlayTheme {
                 MainScreen(
@@ -84,6 +86,53 @@ class MainActivity : ComponentActivity() {
                     }
                 )
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleConfigIntent(intent)
+    }
+
+    private fun handleConfigIntent(intent: Intent?) {
+        intent ?: return
+        val url = intent.getStringExtra("config_ha_url")
+        val token = intent.getStringExtra("config_ha_token")
+        if (!url.isNullOrBlank() && !token.isNullOrBlank()) {
+            val haConfig = configManager.getHaConfig().copy(
+                baseUrl = url,
+                accessToken = token,
+                useWebSocket = true
+            )
+            configManager.saveHaConfig(haConfig)
+
+            val buttonsJson = intent.getStringExtra("config_buttons_json")
+            if (!buttonsJson.isNullOrBlank()) {
+                try {
+                    val listType = object : com.google.gson.reflect.TypeToken<List<OverlayButtonConfig>>() {}.type
+                    val list: List<OverlayButtonConfig> = com.google.gson.Gson().fromJson(buttonsJson, listType)
+                    if (list.isNotEmpty()) {
+                        configManager.saveButtons(list)
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("MainActivity", "Failed to parse buttons json", e)
+                }
+            }
+
+            val settingsJson = intent.getStringExtra("config_settings_json")
+            if (!settingsJson.isNullOrBlank()) {
+                try {
+                    val s: OverlaySettings = com.google.gson.Gson().fromJson(settingsJson, OverlaySettings::class.java)
+                    configManager.saveOverlaySettings(s.copy(isServiceEnabled = true))
+                } catch (e: Exception) {
+                    android.util.Log.e("MainActivity", "Failed to parse settings json", e)
+                }
+            } else {
+                configManager.setServiceEnabled(true)
+            }
+
+            CoverOverlayService.start(this)
+            Toast.makeText(this, "Configuration restored successfully", Toast.LENGTH_SHORT).show()
         }
     }
 

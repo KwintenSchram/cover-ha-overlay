@@ -34,7 +34,11 @@ jobs:
       - name: Build Release & Debug APKs
         run: |
           ./gradlew assembleRelease assembleDebug
-          cp app/build/outputs/apk/release/app-release-unsigned.apk CoverHAOverlay-${{ github.ref_name }}.apk
+          if [ -f app/build/outputs/apk/release/app-release.apk ]; then
+            cp app/build/outputs/apk/release/app-release.apk CoverHAOverlay-${{ github.ref_name }}.apk
+          else
+            cp app/build/outputs/apk/release/app-release-unsigned.apk CoverHAOverlay-${{ github.ref_name }}.apk
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
