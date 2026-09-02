@@ -1,4 +1,4 @@
-﻿package com.haoverlay.coverscreen.network
+package com.haoverlay.coverscreen.network
 
 import com.google.common.truth.Truth.assertThat
 import com.haoverlay.coverscreen.data.model.HaConfig

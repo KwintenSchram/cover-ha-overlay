@@ -7,7 +7,7 @@ on:
 
 jobs:
   release:
-    name: Build & Publish Release Package
+    name: Verify & Publish Release
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -28,24 +28,39 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Run Tests
+      - name: Run Lint
+        run: ./gradlew lintDebug
+
+      - name: Run Unit Tests
         run: ./gradlew testDebugUnitTest
 
-      - name: Build Release & Debug APKs
+      # Signing credentials are deliberately NOT stored in this repository or in GitHub
+      # secrets. CI verifies that the release build compiles and passes tests; the signed APK
+      # is produced locally by the maintainer and attached to the release by hand.
+      #
+      # Releases up to and including v1.0.0 were signed with the public Android debug key.
+      # Falling back to that key here would reintroduce the exact problem, so this job builds
+      # release only to prove it compiles and never publishes the unsigned artifact.
+      - name: Build Release (verification only, unsigned)
+        run: ./gradlew assembleRelease
+
+      - name: Confirm no debug-signed artifact is published
         run: |
-          ./gradlew assembleRelease assembleDebug
           if [ -f app/build/outputs/apk/release/app-release.apk ]; then
-            cp app/build/outputs/apk/release/app-release.apk CoverHAOverlay-${{ github.ref_name }}.apk
-          else
-            cp app/build/outputs/apk/release/app-release-unsigned.apk CoverHAOverlay-${{ github.ref_name }}.apk
+            echo "::error::A signed app-release.apk appeared in CI. Signing credentials must not be available here."
+            exit 1
           fi
+          echo "Release build verified (unsigned, not published)."
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: Cover HA Overlay ${{ github.ref_name }}
-          draft: false
+          draft: true
           prerelease: false
           generate_release_notes: true
-          files: |
-            CoverHAOverlay-${{ github.ref_name }}.apk
+          body: |
+            > Attach the locally-built **signed** APK to this draft, then publish.
+            >
+            > Build it with:
+            > `./gradlew assembleRelease` (with `COVERHA_KEYSTORE_*` set in `~/.gradle/gradle.properties`)

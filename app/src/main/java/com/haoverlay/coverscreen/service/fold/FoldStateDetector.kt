@@ -95,11 +95,14 @@ class FoldStateDetector(
             addAction(Intent.ACTION_USER_PRESENT)
         }
 
+        // NOT_EXPORTED: every action in this filter is a protected system broadcast, which the
+        // platform still delivers. Registering as EXPORTED let any installed app fake
+        // com.samsung.intent.action.FOLD_STATE and force the overlay to attach on demand.
         ContextCompat.registerReceiver(
             context,
             broadcastReceiver,
             filter,
-            ContextCompat.RECEIVER_EXPORTED
+            ContextCompat.RECEIVER_NOT_EXPORTED
         )
 
         displayManager.registerDisplayListener(displayListener, null)

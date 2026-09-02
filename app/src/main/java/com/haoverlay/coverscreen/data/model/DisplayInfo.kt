@@ -15,7 +15,7 @@ data class DisplayInfo(
     val detectionReason: String
 ) {
     val resolutionText: String
-        get() = "${width}×${height} (${densityDpi}dpi)"
+        get() = "${width}Ã—${height} (${densityDpi}dpi)"
 
     val stateText: String
         get() = when (state) {

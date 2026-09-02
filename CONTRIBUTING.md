@@ -1,4 +1,4 @@
-﻿# Contributing to Cover HA Overlay
+# Contributing to Cover HA Overlay
 
 Thank you for your interest in contributing!
 

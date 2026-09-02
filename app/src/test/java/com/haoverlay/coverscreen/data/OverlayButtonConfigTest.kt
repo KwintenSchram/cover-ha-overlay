@@ -1,4 +1,4 @@
-﻿package com.haoverlay.coverscreen.data
+package com.haoverlay.coverscreen.data
 
 import com.google.common.truth.Truth.assertThat
 import com.google.gson.Gson

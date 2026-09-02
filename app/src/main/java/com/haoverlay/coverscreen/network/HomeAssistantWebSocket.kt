@@ -35,6 +35,15 @@ class HomeAssistantWebSocket(
     private var webSocket: WebSocket? = null
     private var isConnected = false
     private var isPaused = false
+
+    /**
+     * Set when Home Assistant answers `auth_invalid`. HA closes the socket straight afterwards,
+     * which used to trip onClosed -> reconnect -> auth fails -> repeat, forever, every 5s.
+     * Once the token is rejected we stop until the configuration changes.
+     */
+    private var isAuthRejected = false
+    private var reconnectAttempts = 0
+
     private val messageIdCounter = AtomicInteger(1)
     private var reconnectJob: Job? = null
 
@@ -44,6 +53,10 @@ class HomeAssistantWebSocket(
     private val _connectionStatus = MutableSharedFlow<Boolean>(replay = 1)
     val connectionStatus: SharedFlow<Boolean> = _connectionStatus.asSharedFlow()
 
+    /** Emits true when the access token was rejected, so callers can surface it to the user. */
+    private val _authRejected = MutableSharedFlow<Boolean>(replay = 1)
+    val authRejected: SharedFlow<Boolean> = _authRejected.asSharedFlow()
+
     private val httpClient = OkHttpClient.Builder()
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .pingInterval(30, TimeUnit.SECONDS)
@@ -52,14 +65,20 @@ class HomeAssistantWebSocket(
     fun updateConfig(newConfig: HaConfig) {
         val changed = config.cleanBaseUrl != newConfig.cleanBaseUrl || config.accessToken != newConfig.accessToken
         this.config = newConfig
-        if (changed && isConnected) {
-            reconnect()
+        if (changed) {
+            // New credentials deserve a fresh attempt even if the previous token was rejected.
+            isAuthRejected = false
+            reconnectAttempts = 0
+            _authRejected.tryEmit(false)
+            if (isConnected || !isPaused) {
+                reconnect()
+            }
         }
     }
 
     fun start() {
         isPaused = false
-        if (webSocket == null && config.isValid && config.useWebSocket) {
+        if (webSocket == null && canConnect()) {
             connect()
         }
     }
@@ -71,7 +90,7 @@ class HomeAssistantWebSocket(
 
     fun resume() {
         isPaused = false
-        if (config.isValid && config.useWebSocket) {
+        if (canConnect()) {
             connect()
         }
     }
@@ -79,11 +98,15 @@ class HomeAssistantWebSocket(
     fun stop() {
         isPaused = true
         reconnectJob?.cancel()
+        reconnectJob = null
         disconnect()
     }
 
+    private fun canConnect(): Boolean =
+        config.isValid && config.useWebSocket && !isAuthRejected
+
     private fun connect() {
-        if (isPaused || !config.isValid || !config.useWebSocket) return
+        if (isPaused || !canConnect()) return
 
         val wsUrl = config.cleanBaseUrl
             .replace("http://", "ws://")
@@ -107,15 +130,28 @@ class HomeAssistantWebSocket(
         _connectionStatus.tryEmit(false)
     }
 
+    /**
+     * Schedules a reconnect using exponential backoff with jitter.
+     *
+     * The previous implementation retried on a flat 5s timer with no ceiling and no give-up
+     * condition, so an unreachable server or a revoked token meant a network round trip every
+     * five seconds indefinitely.
+     */
     private fun reconnect() {
         disconnect()
-        if (isPaused) return
+        if (isPaused || isAuthRejected) return
+
+        val attempt = reconnectAttempts.coerceAtMost(MAX_BACKOFF_EXPONENT)
+        val backoffMs = (INITIAL_BACKOFF_MS shl attempt).coerceAtMost(MAX_BACKOFF_MS)
+        val jitterMs = (backoffMs * JITTER_FRACTION * Math.random()).toLong()
+        val delayMs = backoffMs + jitterMs
+        reconnectAttempts++
 
         reconnectJob?.cancel()
         reconnectJob = scope.launch(Dispatchers.IO) {
-            delay(5000)
-            if (isActive && !isPaused) {
-                Log.d(TAG, "Attempting WebSocket reconnect...")
+            Log.d(TAG, "WebSocket reconnect attempt #" + reconnectAttempts + " in " + delayMs + "ms")
+            delay(delayMs)
+            if (isActive && !isPaused && !isAuthRejected) {
                 connect()
             }
         }
@@ -168,13 +204,24 @@ class HomeAssistantWebSocket(
                 "auth_ok" -> {
                     Log.i(TAG, "WebSocket authentication successful")
                     isConnected = true
+                    isAuthRejected = false
+                    reconnectAttempts = 0
                     _connectionStatus.tryEmit(true)
+                    _authRejected.tryEmit(false)
                     subscribeStateChanges(ws)
                 }
                 "auth_invalid" -> {
-                    Log.e(TAG, "WebSocket authentication failed: ${json.get("message")?.asString}")
+                    Log.e(
+                        TAG,
+                        "WebSocket authentication rejected: ${json.get("message")?.asString}. " +
+                            "Halting reconnects until the credentials change."
+                    )
                     isConnected = false
+                    isAuthRejected = true
+                    reconnectJob?.cancel()
+                    reconnectJob = null
                     _connectionStatus.tryEmit(false)
+                    _authRejected.tryEmit(true)
                 }
                 "event" -> {
                     val eventObj = json.getAsJsonObject("event")
@@ -205,5 +252,10 @@ class HomeAssistantWebSocket(
 
     companion object {
         private const val TAG = "HaWebSocket"
+
+        private const val INITIAL_BACKOFF_MS = 2_000L
+        private const val MAX_BACKOFF_MS = 300_000L   // 5 minutes
+        private const val MAX_BACKOFF_EXPONENT = 8    // 2s -> 512s, clamped by MAX_BACKOFF_MS
+        private const val JITTER_FRACTION = 0.25
     }
 }

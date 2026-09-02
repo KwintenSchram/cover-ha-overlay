@@ -9,6 +9,8 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
+import android.util.Base64
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -42,6 +44,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.google.gson.Gson
+import com.google.gson.JsonParser
+import com.google.gson.reflect.TypeToken
+import com.haoverlay.coverscreen.BuildConfig
 import com.haoverlay.coverscreen.R
 import com.haoverlay.coverscreen.data.model.*
 import com.haoverlay.coverscreen.data.storage.SecureConfigManager
@@ -94,118 +103,75 @@ class MainActivity : ComponentActivity() {
         handleConfigIntent(intent)
     }
 
+    /**
+     * Debug-only configuration restore hook.
+     *
+     * This previously ran on *every* intent (including the plain launcher intent) and
+     * unconditionally read `/data/local/tmp/restore_config.json`, so anything able to write
+     * that path -- or any installed app able to start this exported activity with a few
+     * string extras -- could silently replace the Home Assistant server, the access token
+     * and the entire button set, then force-start the overlay.
+     *
+     * It is now gated three ways:
+     *   1. Release builds ignore it entirely (`BuildConfig.DEBUG`).
+     *   2. The intent must explicitly carry [ACTION_RESTORE_CONFIG].
+     *   3. Only inline extras are accepted -- arbitrary filesystem paths are never read.
+     */
     private fun handleConfigIntent(intent: Intent?) {
+        if (!BuildConfig.DEBUG) return
         intent ?: return
+        if (intent.action != ACTION_RESTORE_CONFIG) return
 
-        var jsonStr: String? = null
-        val filePath = intent.getStringExtra("config_file") ?: "/data/local/tmp/restore_config.json"
-        val file = java.io.File(filePath)
-        if (file.exists() && file.canRead()) {
-            try {
-                jsonStr = file.readText(Charsets.UTF_8)
-            } catch (e: Exception) {
-                android.util.Log.e("MainActivity", "Failed to read config file", e)
-            }
-        }
-
-        if (jsonStr.isNullOrBlank()) {
-            val base64Config = intent.getStringExtra("config_base64")
-            if (!base64Config.isNullOrBlank()) {
+        val payload = intent.getStringExtra(EXTRA_CONFIG_JSON)
+            ?: intent.getStringExtra(EXTRA_CONFIG_BASE64)?.let { encoded ->
                 try {
-                    jsonStr = String(android.util.Base64.decode(base64Config, android.util.Base64.DEFAULT), Charsets.UTF_8)
-                } catch (e: Exception) {
-                    android.util.Log.e("MainActivity", "Failed to decode base64 config", e)
+                    String(Base64.decode(encoded, Base64.DEFAULT), Charsets.UTF_8)
+                } catch (e: IllegalArgumentException) {
+                    Log.e(TAG, "Restore payload was not valid base64", e)
+                    null
                 }
             }
+
+        if (payload.isNullOrBlank()) {
+            Log.w(TAG, "Restore intent carried no usable config payload")
+            return
         }
 
-        if (!jsonStr.isNullOrBlank()) {
-            try {
-                val root = com.google.gson.JsonParser.parseString(jsonStr).asJsonObject
-                if (root.has("haConfig")) {
-                    val elem = root.get("haConfig")
-                    val ha: HaConfig? = if (elem.isJsonObject) {
-                        com.google.gson.Gson().fromJson(elem, HaConfig::class.java)
-                    } else if (elem.isJsonPrimitive) {
-                        com.google.gson.Gson().fromJson(elem.asString, HaConfig::class.java)
-                    } else null
-                    ha?.let {
-                        configManager.saveHaConfig(it)
-                        android.util.Log.d("MainActivity", "Restored haConfig: ${it.baseUrl}")
-                    }
+        applyRestoredConfig(payload)
+    }
+
+    /** Applies a debug restore payload. Never called from release builds. */
+    private fun applyRestoredConfig(json: String) {
+        try {
+            val gson = Gson()
+            val root = JsonParser.parseString(json).asJsonObject
+
+            root.get("haConfig")?.takeIf { it.isJsonObject }?.let { element ->
+                gson.fromJson(element, HaConfig::class.java)?.let { configManager.saveHaConfig(it) }
+            }
+
+            root.get("buttons")?.takeIf { it.isJsonArray }?.let { element ->
+                val listType = object : TypeToken<List<OverlayButtonConfig>>() {}.type
+                val restored: List<OverlayButtonConfig>? = gson.fromJson(element, listType)
+                if (!restored.isNullOrEmpty()) configManager.saveButtons(restored)
+            }
+
+            root.get("settings")?.takeIf { it.isJsonObject }?.let { element ->
+                gson.fromJson(element, OverlaySettings::class.java)?.let {
+                    configManager.saveOverlaySettings(it)
                 }
-                if (root.has("buttons")) {
-                    val elem = root.get("buttons")
-                    val listType = object : com.google.gson.reflect.TypeToken<List<OverlayButtonConfig>>() {}.type
-                    val list: List<OverlayButtonConfig>? = if (elem.isJsonArray) {
-                        com.google.gson.Gson().fromJson(elem, listType)
-                    } else if (elem.isJsonPrimitive) {
-                        com.google.gson.Gson().fromJson(elem.asString, listType)
-                    } else null
-                    if (!list.isNullOrEmpty()) {
-                        configManager.saveButtons(list)
-                        android.util.Log.d("MainActivity", "Restored ${list.size} buttons")
-                    }
-                }
-                if (root.has("settings")) {
-                    val elem = root.get("settings")
-                    val s: OverlaySettings? = if (elem.isJsonObject) {
-                        com.google.gson.Gson().fromJson(elem, OverlaySettings::class.java)
-                    } else if (elem.isJsonPrimitive) {
-                        com.google.gson.Gson().fromJson(elem.asString, OverlaySettings::class.java)
-                    } else null
-                    s?.let {
-                        configManager.saveOverlaySettings(it.copy(isServiceEnabled = true))
-                        android.util.Log.d("MainActivity", "Restored settings")
-                    }
-                } else {
-                    configManager.setServiceEnabled(true)
-                }
+            }
+
+            // Honour whatever the restored settings actually say rather than force-enabling.
+            if (configManager.getOverlaySettings().isServiceEnabled) {
                 CoverOverlayService.start(this)
-                Toast.makeText(this, "Configuration restored successfully", Toast.LENGTH_SHORT).show()
-                return
-            } catch (e: Exception) {
-                android.util.Log.e("MainActivity", "Failed to parse json config", e)
-            }
-        }
-
-        val url = intent.getStringExtra("config_ha_url")
-        val token = intent.getStringExtra("config_ha_token")
-        if (!url.isNullOrBlank() && !token.isNullOrBlank()) {
-            val haConfig = configManager.getHaConfig().copy(
-                baseUrl = url,
-                accessToken = token,
-                useWebSocket = true
-            )
-            configManager.saveHaConfig(haConfig)
-
-            val buttonsJson = intent.getStringExtra("config_buttons_json")
-            if (!buttonsJson.isNullOrBlank()) {
-                try {
-                    val listType = object : com.google.gson.reflect.TypeToken<List<OverlayButtonConfig>>() {}.type
-                    val list: List<OverlayButtonConfig> = com.google.gson.Gson().fromJson(buttonsJson, listType)
-                    if (list.isNotEmpty()) {
-                        configManager.saveButtons(list)
-                    }
-                } catch (e: Exception) {
-                    android.util.Log.e("MainActivity", "Failed to parse buttons json", e)
-                }
             }
 
-            val settingsJson = intent.getStringExtra("config_settings_json")
-            if (!settingsJson.isNullOrBlank()) {
-                try {
-                    val s: OverlaySettings = com.google.gson.Gson().fromJson(settingsJson, OverlaySettings::class.java)
-                    configManager.saveOverlaySettings(s.copy(isServiceEnabled = true))
-                } catch (e: Exception) {
-                    android.util.Log.e("MainActivity", "Failed to parse settings json", e)
-                }
-            } else {
-                configManager.setServiceEnabled(true)
-            }
-
-            CoverOverlayService.start(this)
-            Toast.makeText(this, "Configuration restored successfully", Toast.LENGTH_SHORT).show()
+            Log.i(TAG, "Debug configuration restore applied")
+            Toast.makeText(this, "Debug config restored", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to parse restore payload", e)
+            Toast.makeText(this, "Config restore failed: invalid payload", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -217,6 +183,15 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         coverDisplayManager.stop()
+    }
+
+    companion object {
+        private const val TAG = "MainActivity"
+
+        /** Explicit action required by the debug-only config restore hook. */
+        const val ACTION_RESTORE_CONFIG = "com.haoverlay.coverscreen.ACTION_RESTORE_CONFIG"
+        const val EXTRA_CONFIG_JSON = "config_json"
+        const val EXTRA_CONFIG_BASE64 = "config_base64"
     }
 }
 
@@ -409,10 +384,54 @@ fun DashboardTab(
         mutableStateOf(pm.isIgnoringBatteryOptimizations(context.packageName))
     }
 
+    // Permission grants happen in system Settings, so re-read them every time we come back
+    // to the foreground -- otherwise the cards keep claiming "not granted" until a restart.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                hasOverlayPermission = Settings.canDrawOverlays(context)
+                val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+                isBatteryIgnoring = pm.isIgnoringBatteryOptimizations(context.packageName)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        // Encrypted-storage fallback banner. Previously this downgrade was silent while the
+        // app kept claiming Keystore-backed AES-256-GCM storage.
+        if (!configManager.isEncryptionActive) {
+            item {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0x22EF4444))
+                        .padding(12.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Warning,
+                        contentDescription = null,
+                        tint = AccentRed,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Encrypted storage unavailable on this device. Your access token " +
+                                "is being stored unencrypted in app-private storage.",
+                        fontSize = 12.sp,
+                        color = AccentRed
+                    )
+                }
+            }
+        }
+
         // Service Status Banner
         item {
             Card(
@@ -552,6 +571,39 @@ fun DashboardTab(
                             unfocusedBorderColor = DarkCardBorder
                         )
                     )
+
+                    // A typo'd or hostile URL would otherwise ship the long-lived token over
+                    // plain HTTP to an arbitrary internet host.
+                    val isCleartextRisk = remember(baseUrlInput) {
+                        HaConfig(baseUrl = baseUrlInput, accessToken = "placeholder")
+                            .isCleartextToPublicHost
+                    }
+                    AnimatedVisibility(visible = isCleartextRisk) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0x22F59E0B))
+                                .padding(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = null,
+                                tint = AccentAmber,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "This is a public host over plain HTTP. Your access token " +
+                                        "would be sent unencrypted. Use https:// unless the server " +
+                                        "is on your local network.",
+                                fontSize = 12.sp,
+                                color = AccentAmber
+                            )
+                        }
+                    }
 
                     Spacer(modifier = Modifier.height(8.dp))
 

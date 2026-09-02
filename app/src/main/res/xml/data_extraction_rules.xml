@@ -1,9 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    See backup_rules.xml. The plaintext fallback preference file (ha_overlay_prefs) must be
+    excluded from cloud backup and device transfer alongside the encrypted one, otherwise a
+    device where Keystore initialisation failed leaks the Home Assistant access token.
+-->
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="sharedpref" path="ha_overlay_secure_prefs.xml"/>
+        <exclude domain="sharedpref" path="ha_overlay_prefs.xml"/>
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="ha_overlay_secure_prefs.xml"/>
+        <exclude domain="sharedpref" path="ha_overlay_prefs.xml"/>
     </device-transfer>
 </data-extraction-rules>

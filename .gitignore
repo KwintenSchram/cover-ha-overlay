@@ -45,10 +45,12 @@ captures/
 *.ipr
 out/
 
-# Keystore files
+# Keystore files -- release signing credentials must never enter the repo
 *.jks
 *.keystore
 *.key
+*.p12
+*.pepk
 
 # Google Services (if any)
 google-services.json
@@ -58,9 +60,14 @@ google-services.json
 Thumbs.db
 
 # Sensitive local documents & credentials
+# NOTE: ha_access_instructions.md previously lived in this directory containing a live
+# Home Assistant long-lived token and SSH root details. It has been moved OUT of the repo
+# tree entirely -- a gitignore entry is a backstop, not a place to keep secrets.
 ha_access_instructions.md
 *.env
 *.private.json
+local.keystore.properties
+keystore.properties
 
 # Local marketing materials & video recordings
 marketing/

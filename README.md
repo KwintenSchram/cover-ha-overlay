@@ -5,7 +5,7 @@
 [![F-Droid](https://img.shields.io/badge/F--Droid-Ready-brightgreen.svg)](fdroid_recipe/com.haoverlay.coverscreen.yml)
 [![Target SDK](https://img.shields.io/badge/API-26%2B%20(Target%2034)-orange.svg)](https://developer.android.com)
 
-A lightweight, security-hardened, zero-latency native Android application engineered specifically for **Samsung Galaxy Z Flip** foldable devices (**Galaxy Z Flip7, Flip6, Flip5, Flip4, Flip3**).
+A lightweight native Android application engineered specifically for **Samsung Galaxy Z Flip** foldable devices (**Galaxy Z Flip7, Flip6, Flip5, Flip4, Flip3**).
 
 The app renders an always-available, floating quick-control bar of icon-buttons directly on the Samsung Cover Display (Flex Window / Sub-display). Tapping an icon executes Home Assistant entity/service actions instantly in the background with zero visible UI disruption, zero Activity launches, and full touch-passthrough to the native clock, notifications, and Samsung widgets underneath.
 
@@ -24,12 +24,12 @@ The app renders an always-available, floating quick-control bar of icon-buttons 
 
 | Feature | Good Lock / MultiStar + HA App | Cover HA Overlay |
 | :--- | :--- | :--- |
-| **Launch Speed** | ❌ 2–4 seconds (swiping widgets, cold-starting WebView) | ✅ **0 milliseconds (instant on cover screen wake)** |
+| **Launch Speed** | ❌ 2–4 seconds (swiping widgets, cold-starting WebView) | ✅ **Already on screen — no launch step** |
 | **Lock Screen Access** | ❌ Requires device unlock to view full dashboard | ✅ **Works on locked cover screen** (`FLAG_SHOW_WHEN_LOCKED`) |
 | **UI Interruption** | ❌ Takes over entire display with full app window | ✅ **Compact floating pill; zero full-screen popups** |
 | **Touch Passthrough** | ❌ Captures entire screen | ✅ **Full touch passthrough to clock and Samsung widgets** |
 | **Safety Guards** | ❌ Standard tap immediately fires | ✅ **Sensor guards (e.g. hallway light) & double-tap confirmations** |
-| **Idle Battery Drain** | ⚠️ Background WebView memory footprint | ✅ **0.0% CPU when cover screen is asleep** |
+| **Idle Battery Drain** | ⚠️ Background WebView memory footprint | ✅ **Network paused while the cover screen sleeps** |
 
 ---
 
@@ -39,9 +39,10 @@ The app renders an always-available, floating quick-control bar of icon-buttons 
   - Rendered strictly to the bounding box of the button cluster (`WRAP_CONTENT`), never taking over the full display.
   - Window flags `FLAG_NOT_FOCUSABLE` and `FLAG_NOT_TOUCH_MODAL` ensure all touches outside the buttons pass directly through to Samsung's native cover widgets and clock.
 - **Dynamic Display Targeting**:
-  - Scans `DisplayManager.getDisplays()` dynamically at runtime to identify the cover screen using multi-heuristic detection (display name matching, aspect ratio analysis, and secondary display flags).
-  - Attaches overlay to the cover display context via `createDisplayContext()`.
-  - Graceful fallback for standard screens and emulators.
+  - Scans `DisplayManager.getDisplays()` at runtime and identifies the cover screen by display-name keywords and known Z Flip resolution signatures.
+  - External and remote surfaces (Chromecast/Miracast, HDMI, DeX, `FLAG_PRIVATE` simulated displays) are **explicitly rejected**, so quick controls can never be rendered onto a TV or a casting session.
+  - Attaches the overlay to the cover display context via `createDisplayContext()`.
+  - Detection is deliberately conservative: unrecognised hardware matches nothing, and you pin the display by hand from the **Displays** tab.
 - **Fold-State Awareness**:
   - Automatically attaches the overlay when the phone is closed (folded) and cover screen is active.
   - Detaches cleanly when the phone is unfolded or when the cover display enters deep sleep.
@@ -54,10 +55,12 @@ The app renders an always-available, floating quick-control bar of icon-buttons 
   - Battery-aware lifecycle: Pauses WebSocket subscriptions when the cover screen sleeps, resuming on wake.
   - Fallback periodic polling for low-power operation.
 - **Encrypted Local Storage**:
-  - Base URL, Long-Lived Access Tokens, and button configurations are securely stored using Android Keystore `EncryptedSharedPreferences` (AES256-GCM).
+  - Base URL, Long-Lived Access Tokens, and button configurations are stored using Android Keystore `EncryptedSharedPreferences` (AES256-GCM).
+  - If Keystore initialisation fails the app falls back to app-private plaintext preferences and **says so with a banner** — both files are excluded from cloud backup and device transfer.
 - **Samsung One UI Background Longevity**:
   - Foreground Service with `specialUse` / `dataSync` type and persistent silent notification.
-  - Boot receiver (`ACTION_BOOT_COMPLETED`, `ACTION_MY_PACKAGE_REPLACED`) and AlarmManager watchdog to survive One UI background process management.
+  - Boot receiver (`ACTION_BOOT_COMPLETED`, `ACTION_MY_PACKAGE_REPLACED`) and a 15-minute AlarmManager watchdog to survive One UI background process management.
+  - The watchdog uses `setAndAllowWhileIdle` with a wakeup alarm, so it does briefly wake the device every 15 minutes — that is the cost of surviving One UI. If you force-stop the app, Android cancels its alarms and blocks its broadcasts, so nothing restarts it until you open it again.
 - **Material 3 Setup Dashboard**:
   - Entity browser (fetches live entities directly from your HA server).
   - Service selector with smart presets per domain (`light.toggle`, `switch.toggle`, `cover.open_cover`, `lock.unlock`, `scene.turn_on`, etc.).
@@ -91,12 +94,16 @@ The app renders an always-available, floating quick-control bar of icon-buttons 
 Ensure you have the Android SDK and ADB installed:
 
 ```bash
-# Build the debug APK
 ./gradlew assembleDebug
-
-# Install onto your Samsung Galaxy Z Flip via USB or Wireless ADB
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
+
+Or grab the signed APK from [Releases](https://github.com/KwintenSchram/cover-ha-overlay/releases).
+
+> [!NOTE]
+> Release APKs from v1.1.0 onward are signed with a project release key. Builds up to and
+> including v1.0.0 were signed with the Android **debug** key, whose password is public — if you
+> installed one of those, uninstall it before installing v1.1.0 or the signature check will fail.
 
 ### Step 3: Initial App Configuration
 1. Open **Cover HA Overlay** on your phone's main screen.
@@ -153,6 +160,25 @@ Samsung One UI employs aggressive battery management. To ensure 100% reliability
 
 > [!IMPORTANT]
 > **Use at your own risk.** This application communicates directly with your Home Assistant instance and can trigger physical automations (such as unlatching front doors, opening garages, or switching appliances). The authors and contributors assume **no responsibility or liability** for any damages, security incidents, unintended actions, or hardware malfunctions resulting from the use or misuse of this software. Always test smart lock configurations and safety guards thoroughly before relying on them.
+
+---
+
+## 🔐 Security Model
+
+- Credentials live only on your device, in Keystore-backed `EncryptedSharedPreferences`, and are
+  excluded from cloud backup and device transfer.
+- There is **no** remote configuration path in release builds. The debug-only restore hook
+  requires an explicit `ACTION_RESTORE_CONFIG` intent and inline extras; it never reads files
+  from disk and is compiled out of release builds entirely.
+- The overlay window is `WRAP_CONTENT` with `FLAG_NOT_FOCUSABLE` / `FLAG_NOT_TOUCH_MODAL`, so it
+  only receives touches that land on the buttons themselves.
+- `usesCleartextTraffic` stays enabled because most Home Assistant installs are plain HTTP on the
+  LAN. Android's network-security-config cannot express private IP ranges, so the app instead
+  **warns you in the setup screen** when a `http://` URL points at a host outside RFC1918 /
+  loopback / `.local`, where your token would travel unencrypted.
+- No telemetry, analytics, tracking SDKs, or ad libraries.
+
+See [SECURITY.md](SECURITY.md) for the full policy and reporting process.
 
 ---
 

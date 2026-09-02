@@ -1,4 +1,4 @@
-﻿package com.haoverlay.coverscreen.service.fold
+package com.haoverlay.coverscreen.service.fold
 
 import android.content.Context
 import android.hardware.display.DisplayManager

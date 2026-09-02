@@ -13,8 +13,8 @@ android {
         applicationId = "com.haoverlay.coverscreen"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -22,10 +22,61 @@ android {
         }
     }
 
+    /**
+     * Release signing.
+     *
+     * Releases used to be signed with the SDK's *debug* key, whose password is public
+     * ("android" / androiddebugkey). Anyone could therefore build an APK that installed as an
+     * in-place upgrade over a real install, inheriting its SYSTEM_ALERT_WINDOW grant and data.
+     *
+     * Credentials are read from Gradle properties (put them in your GLOBAL
+     * ~/.gradle/gradle.properties, never in this repo) with an environment-variable fallback
+     * for CI. When they are absent the release build is simply left unsigned rather than
+     * silently falling back to a well-known key.
+     */
+    val keystorePath: String? = (findProperty("COVERHA_KEYSTORE_FILE") as String?)
+        ?: System.getenv("COVERHA_KEYSTORE_FILE")
+    val keystorePassword: String? = (findProperty("COVERHA_KEYSTORE_PASSWORD") as String?)
+        ?: System.getenv("COVERHA_KEYSTORE_PASSWORD")
+    val keyAliasName: String? = (findProperty("COVERHA_KEY_ALIAS") as String?)
+        ?: System.getenv("COVERHA_KEY_ALIAS")
+    val keyPasswordValue: String? = (findProperty("COVERHA_KEY_PASSWORD") as String?)
+        ?: System.getenv("COVERHA_KEY_PASSWORD")
+
+    val hasReleaseSigning = !keystorePath.isNullOrBlank() &&
+            !keystorePassword.isNullOrBlank() &&
+            !keyAliasName.isNullOrBlank() &&
+            !keyPasswordValue.isNullOrBlank() &&
+            file(keystorePath).exists()
+
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(keystorePath!!)
+                storePassword = keystorePassword
+                keyAlias = keyAliasName
+                keyPassword = keyPasswordValue
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
+                enableV4Signing = false
+            }
+        }
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("debug")
+            isMinifyEnabled = true
+            isShrinkResources = true
+            signingConfig = if (hasReleaseSigning) {
+                signingConfigs.getByName("release")
+            } else {
+                logger.warn(
+                    "COVERHA_KEYSTORE_* not configured - release APK will be UNSIGNED. " +
+                        "Never fall back to the debug key for a distributed build."
+                )
+                null
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -48,6 +99,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     packaging {
@@ -70,6 +122,7 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.window)
     implementation(libs.androidx.security.crypto)
 

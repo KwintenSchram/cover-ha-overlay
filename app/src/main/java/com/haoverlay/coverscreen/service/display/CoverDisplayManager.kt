@@ -66,7 +66,6 @@ class CoverDisplayManager(private val context: Context) {
         displayManager.getDisplays(null)?.let { list.addAll(it) }
         displayManager.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION)?.let { list.addAll(it) }
         list.addAll(displayManager.displays)
-        displayManager.getDisplay(1)?.let { list.add(it) }
         displayManager.getDisplay(Display.DEFAULT_DISPLAY)?.let { list.add(it) }
         return list.distinctBy { it.displayId }
     }
@@ -174,7 +173,8 @@ class CoverDisplayManager(private val context: Context) {
      */
     fun evaluateIfCoverDisplay(display: Display, totalDisplays: Int): Pair<Boolean, String> {
         val displayId = display.displayId
-        val name = (display.name ?: "").lowercase()
+        val rawName = display.name ?: ""
+        val name = rawName.lowercase()
         val size = getDisplayRealSize(display)
         val w = size.x
         val h = size.y
@@ -186,30 +186,36 @@ class CoverDisplayManager(private val context: Context) {
             return Pair(false, "Default / Main internal display")
         }
 
-        // Rule 1: Display Name explicitly matches Samsung/Android cover display names
-        if (name.contains("sub") || name.contains("cover") || name.contains("secondary") || 
-            name.contains("flip") || name.contains("flex") || name.contains("external") ||
-            name.contains("rear")) {
-            return Pair(true, "Matched cover display keyword in name: '${display.name}'")
+        // Rule 0 -- hard reject anything that is, or might be, an external or remote surface.
+        // Casting to a TV, plugging in HDMI/DeX or enabling a simulated display in developer
+        // options must never move door-unlock buttons onto someone else's screen.
+        EXTERNAL_NAME_KEYWORDS.firstOrNull { name.contains(it) }?.let { keyword ->
+            return Pair(false, "Rejected: name contains external-display keyword '$keyword' ('$rawName')")
+        }
+        if ((display.flags and Display.FLAG_PRIVATE) != 0) {
+            return Pair(false, "Rejected: FLAG_PRIVATE virtual/simulated display (#$displayId)")
         }
 
-        // Rule 2: Resolution & Aspect Ratio matching Z Flip cover screens
-        // Flip7: 948x1048 (~1.10 aspect ratio)
-        // Flip6/5: 720x748 (~1.04 aspect ratio)
-        // Flip4/3: 260x512 (~1.96 aspect ratio, small)
-        if ((minDim in 700..1200 && maxDim in 700..1200) || (minDim in 240..600 && maxDim in 480..600)) {
-            return Pair(true, "Aspect ratio ($aspectRatio) & resolution (${w}x${h}) match Z Flip sub-display")
+        // Rule 1 -- the display name explicitly identifies a Samsung cover / sub display.
+        COVER_NAME_KEYWORDS.firstOrNull { name.contains(it) }?.let {
+            return Pair(true, "Matched cover display keyword in name: '$rawName'")
         }
 
-        if ((display.flags and Display.FLAG_PRESENTATION) != 0) {
-            return Pair(true, "Secondary display with FLAG_PRESENTATION (#$displayId)")
+        // Rule 2 -- resolution signature of a known Z Flip cover screen.
+        //   Flip7   948x1048 (aspect ~1.11)
+        //   Flip6/5 720x748  (aspect ~1.04)
+        //   Flip4/3 260x512  (aspect ~1.97)
+        val isLargeFlipCover = minDim in 700..1200 && maxDim in 700..1200 && aspectRatio <= 1.35f
+        val isSmallFlipCover = minDim in 240..320 && maxDim in 480..600
+        if (isLargeFlipCover || isSmallFlipCover) {
+            return Pair(true, "Resolution ${w}x${h} (aspect $aspectRatio) matches a Z Flip sub-display")
         }
 
-        if (totalDisplays >= 2) {
-            return Pair(true, "Secondary physical display (ID #$displayId)")
-        }
-
-        return Pair(false, "Unmatched display characteristic")
+        // Deliberately no catch-all. This used to end with "any secondary display wins", plus a
+        // FLAG_PRESENTATION rule -- and FLAG_PRESENTATION is precisely what external displays
+        // carry. Unknown hardware now returns false; the user pins the display by hand from the
+        // Displays tab (TargetDisplayMode.SPECIFIC_ID) instead of the app guessing wrong.
+        return Pair(false, "No cover-display signature (${w}x${h}, aspect $aspectRatio, $totalDisplays displays)")
     }
 
     private fun getDisplayRealSize(display: Display): Point {
@@ -221,5 +227,19 @@ class CoverDisplayManager(private val context: Context) {
 
     companion object {
         private const val TAG = "CoverDisplayManager"
+
+        /** Substrings that positively identify a foldable's inner cover/sub display. */
+        private val COVER_NAME_KEYWORDS = listOf("sub", "cover", "flip", "flex")
+
+        /**
+         * Substrings that disqualify a display outright. Note "external" used to live in the
+         * *accept* list, which meant a display literally named "external" was treated as the
+         * cover screen.
+         */
+        private val EXTERNAL_NAME_KEYWORDS = listOf(
+            "cast", "chromecast", "miracast", "hdmi", "displayport", "wifi", "wi-fi",
+            "wireless", "overlay", "virtual", "simulated", "remote", "external",
+            "dex", "smartview", "smart view"
+        )
     }
 }

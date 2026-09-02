@@ -22,6 +22,15 @@ class SecureConfigManager private constructor(context: Context) {
 
     private val appContext = context.applicationContext
     private val gson = Gson()
+
+    /**
+     * False when Keystore-backed encryption could not be initialised and we fell back to plain
+     * [android.content.SharedPreferences]. This used to be a silent downgrade while the app kept
+     * advertising "AES-256-GCM encrypted storage", so it is now observable and surfaced in the UI.
+     */
+    var isEncryptionActive: Boolean = true
+        private set
+
     private val prefs: SharedPreferences = try {
         val masterKey = MasterKey.Builder(appContext)
             .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
@@ -36,6 +45,7 @@ class SecureConfigManager private constructor(context: Context) {
         )
     } catch (e: Exception) {
         Log.e(TAG, "Failed to initialize EncryptedSharedPreferences, falling back to standard prefs", e)
+        isEncryptionActive = false
         appContext.getSharedPreferences(FALLBACK_PREFS_FILE, Context.MODE_PRIVATE)
     }
 

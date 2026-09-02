@@ -373,8 +373,14 @@ class CoverOverlayService : Service() {
             PixelFormat.TRANSLUCENT
         )
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        // LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS is API 30; this was previously guarded at API 28,
+        // where the constant is not a defined mode.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             params.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            @Suppress("DEPRECATION")
+            params.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
         }
 
         applyPositionToLayoutParams(params, settings, context)

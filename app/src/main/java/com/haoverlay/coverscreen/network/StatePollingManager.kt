@@ -52,15 +52,21 @@ class StatePollingManager(
 
         pollingJob = scope.launch(Dispatchers.IO) {
             while (isActive && isPollingActive) {
-                for (entityId in entityIdsToPoll) {
-                    if (!isActive) break
-                    when (val result = client.fetchEntityState(entityId)) {
-                        is HaResult.Success -> {
-                            _polledStateUpdates.tryEmit(result.data)
+                val tracked = entityIdsToPoll.toSet()
+
+                // One /api/states call covers the whole set. This previously issued a sequential
+                // GET /api/states/<id> per entity per tick, so six buttons meant six round trips
+                // every interval while the cover screen was awake.
+                when (val result = client.fetchEntities()) {
+                    is HaResult.Success -> {
+                        for (state in result.data) {
+                            if (state.entityId in tracked) {
+                                _polledStateUpdates.tryEmit(state)
+                            }
                         }
-                        is HaResult.Error -> {
-                            Log.w(TAG, "Failed to poll state for $entityId: ${result.message}")
-                        }
+                    }
+                    is HaResult.Error -> {
+                        Log.w(TAG, "Failed to poll entity states: ${result.message}")
                     }
                 }
                 delay(pollIntervalMs)

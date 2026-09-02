@@ -1,4 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    Neither preference file may leave the device.
+
+    ha_overlay_secure_prefs is Keystore-encrypted, but its ciphertext is bound to a device key
+    that does not survive a restore, so backing it up only produces unreadable garbage.
+
+    ha_overlay_prefs is the plaintext fallback used when Keystore initialisation fails. It was
+    previously NOT excluded, so on any device where encryption failed to initialise the
+    Home Assistant access token was backed up to the cloud in the clear.
+-->
 <full-backup-content>
     <exclude domain="sharedpref" path="ha_overlay_secure_prefs.xml"/>
+    <exclude domain="sharedpref" path="ha_overlay_prefs.xml"/>
 </full-backup-content>
