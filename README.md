@@ -156,6 +156,41 @@ Samsung One UI employs aggressive battery management. To ensure 100% reliability
 
 ---
 
+## 🔧 Configuration as Data (adb)
+
+Everything the app stores can be read and written as JSON from `adb`, so a device can be
+provisioned, backed up or restored without tapping through the UI. This is also the only way to set
+fields the setup screen does not expose — `showState`, `guardTriggerState` and
+`guardConfirmationWindowMs` have no controls.
+
+```bash
+adb shell content call --uri content://com.haoverlay.coverscreen.config --method schema
+```
+
+**Back up** (the access token is never included unless you ask for it):
+
+```bash
+adb shell content call --uri content://com.haoverlay.coverscreen.config --method export
+```
+
+**Restore.** Pass the JSON base64-encoded — `content call --extra key:type:value` splits on colons,
+which JSON is full of:
+
+```bash
+adb shell content call --uri content://com.haoverlay.coverscreen.config --method import --extra payload_b64:s:"REPLACE_WITH_BASE64"
+```
+
+Import is a **partial update**: keys you omit keep their current value. In particular an `haConfig`
+block without `accessToken` leaves the stored token alone, so you can version a config file without
+putting a credential in it. Unrecognised field names are reported back rather than silently ignored.
+
+> [!NOTE]
+> This channel is restricted to the **adb shell and root UIDs**. Installed apps are refused
+> regardless of the permissions they hold — see [SECURITY.md](SECURITY.md). Anyone holding adb
+> already has broader access to the device than this grants.
+
+---
+
 ## ⚖️ Disclaimer & Safety Warning
 
 > [!IMPORTANT]

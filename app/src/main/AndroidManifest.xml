@@ -63,6 +63,20 @@
             </intent-filter>
         </receiver>
 
+        <!--
+            Programmatic configuration channel for tooling (adb / CI / provisioning).
+
+            exported="true" is required for adb shell to reach it at all, but reachability is not
+            the authorisation: ConfigProvider rejects every call whose Binder.getCallingUid() is not
+            the shell or root UID, so installed apps are refused regardless of permissions. This
+            replaces the old intent-extras + /data/local/tmp path, which had no authentication.
+        -->
+        <provider
+            android:name=".data.provider.ConfigProvider"
+            android:authorities="com.haoverlay.coverscreen.config"
+            android:exported="true"
+            android:grantUriPermissions="false" />
+
         <!-- Watchdog Receiver -->
         <receiver
             android:name=".receiver.WatchdogReceiver"

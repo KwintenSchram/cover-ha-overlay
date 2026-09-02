@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.0] - 2026-09-02
+
+### Added
+- **Configuration as data over `adb`.** A new `ConfigProvider` exposes `export`, `import` and
+  `schema` methods, so a device can be provisioned, backed up and restored as JSON without
+  tapping through the UI. It is also the only way to set fields the setup screen does not
+  expose — `showState`, `guardTriggerState` and `guardConfirmationWindowMs` have no controls.
+  - Restricted to the adb shell and root UIDs. The provider is `exported` so `adb` can reach it,
+    but reachability is not authorisation: any other caller is refused by UID, whatever
+    permissions it holds.
+  - **Import is a partial update.** Keys absent from the payload keep their current value, so an
+    `haConfig` block without `accessToken` no longer blanks the stored token — a footgun that
+    cost a real configuration during 1.1.0 testing.
+  - **Unrecognised field names are reported,** not silently dropped. A payload written against the
+    wrong names used to appear to succeed while changing nothing.
+  - **Exports omit the access token** unless explicitly requested, so a config file can be shared
+    or committed without leaking a credential.
+  - Payloads are passed base64-encoded, because `content call --extra key:type:value` splits its
+    argument on colons and every JSON document is full of them.
+
+### Context
+
+1.1.0 closed a configuration backdoor — the app read `/data/local/tmp/restore_config.json` on
+every launch and accepted credentials from intent extras on an exported activity. That hole was
+also, in practice, the only way to configure the app programmatically or to back it up. Closing it
+without a replacement left no supported path at all, and app data is deliberately excluded from
+cloud backup and device transfer, so an uninstall meant total loss. This release supplies the
+replacement, with the authentication the original never had.
+
 ## [1.1.0] - 2026-09-02
 
 Security and correctness release. **Upgrading from 1.0.0 requires an uninstall** — 1.0.0 was

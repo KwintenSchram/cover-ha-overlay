@@ -17,9 +17,15 @@
 - **Honest fallback.** If Keystore initialisation fails, the app falls back to app-private
   plaintext preferences and displays a warning banner. It does not claim encryption it is not
   providing.
-- **No remote configuration in release builds.** The configuration-restore hook is compiled out
-  of release builds, requires an explicit `ACTION_RESTORE_CONFIG` intent, and only reads inline
-  intent extras — never a filesystem path.
+- **Configuration is settable only by adb shell or root.** `ConfigProvider` exists so devices can
+  be provisioned and backed up programmatically. It is `exported` so that `adb` can reach it, but
+  reachability is not authorisation: every call is rejected unless `Binder.getCallingUid()` is the
+  shell or root UID, so installed apps are refused whatever permissions they hold. This replaces
+  the old intent-extras and `/data/local/tmp` path, which had no authentication at all.
+- **Exports omit the access token by default,** so a configuration file can be committed or shared
+  without leaking a credential. Including it requires an explicit flag.
+- **No remote configuration by intent.** The old `ACTION_RESTORE_CONFIG` debug hook is gone; the
+  provider above is the only configuration channel.
 - **Scoped touch capture.** The overlay window is `WRAP_CONTENT` with `FLAG_NOT_FOCUSABLE` and
   `FLAG_NOT_TOUCH_MODAL`; touches outside the button cluster pass through untouched.
 - **Conservative display targeting.** External and remote displays (casting, HDMI, DeX, virtual)
