@@ -66,7 +66,15 @@ class CoverDisplayManager(private val context: Context) {
         displayManager.getDisplays(null)?.let { list.addAll(it) }
         displayManager.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION)?.let { list.addAll(it) }
         list.addAll(displayManager.displays)
-        displayManager.getDisplay(Display.DEFAULT_DISPLAY)?.let { list.add(it) }
+
+        // Samsung does not surface the cover panel through getDisplays() while it is powered
+        // down, so probe the low logical display ids directly as well. This replaces an earlier
+        // hardcoded getDisplay(1) call: same intent, but without assuming the cover screen is
+        // always display #1 -- and removing the probe entirely made the cover display vanish
+        // from the Displays tab on a real Flip7.
+        for (id in 0 until DISPLAY_ID_PROBE_LIMIT) {
+            displayManager.getDisplay(id)?.let { list.add(it) }
+        }
         return list.distinctBy { it.displayId }
     }
 
@@ -227,6 +235,9 @@ class CoverDisplayManager(private val context: Context) {
 
     companion object {
         private const val TAG = "CoverDisplayManager"
+
+        /** Upper bound for the direct getDisplay(id) probe; foldables use very low ids. */
+        private const val DISPLAY_ID_PROBE_LIMIT = 8
 
         /** Substrings that positively identify a foldable's inner cover/sub display. */
         private val COVER_NAME_KEYWORDS = listOf("sub", "cover", "flip", "flex")
