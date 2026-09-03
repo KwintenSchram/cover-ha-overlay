@@ -6,6 +6,8 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.hardware.display.DisplayManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.PowerManager
 import android.util.Log
 import android.view.Display
@@ -68,18 +70,22 @@ class FoldStateDetector(
         }
     }
 
+    private val evaluateHandler = Handler(Looper.getMainLooper())
+    private val evaluateRunnable = Runnable { evaluateCurrentState() }
+
+    /**
+     * Coalesces display callbacks, for the same reason CoverDisplayManager does: onDisplayChanged
+     * fires on every refresh-rate change, and each evaluation re-enumerates displays.
+     */
+    private fun scheduleEvaluate() {
+        evaluateHandler.removeCallbacks(evaluateRunnable)
+        evaluateHandler.postDelayed(evaluateRunnable, EVALUATE_DEBOUNCE_MS)
+    }
+
     private val displayListener = object : DisplayManager.DisplayListener {
-        override fun onDisplayAdded(displayId: Int) {
-            evaluateCurrentState()
-        }
-
-        override fun onDisplayRemoved(displayId: Int) {
-            evaluateCurrentState()
-        }
-
-        override fun onDisplayChanged(displayId: Int) {
-            evaluateCurrentState()
-        }
+        override fun onDisplayAdded(displayId: Int) = scheduleEvaluate()
+        override fun onDisplayRemoved(displayId: Int) = scheduleEvaluate()
+        override fun onDisplayChanged(displayId: Int) = scheduleEvaluate()
     }
 
     fun start() {
@@ -112,6 +118,7 @@ class FoldStateDetector(
     fun stop() {
         if (!isListening) return
         isListening = false
+        evaluateHandler.removeCallbacks(evaluateRunnable)
 
         try {
             context.unregisterReceiver(broadcastReceiver)
@@ -141,23 +148,25 @@ class FoldStateDetector(
         val defaultDisplay = displayManager.getDisplay(Display.DEFAULT_DISPLAY)
 
         if (coverDisplay != null) {
-            // When device is folded, Samsung turns coverDisplay ON (state == STATE_ON) and defaultDisplay OFF
+            // When the device is folded, Samsung turns the cover display ON and the main one OFF.
             val coverOn = coverDisplay.state == Display.STATE_ON
-            val defaultOff = defaultDisplay?.state != Display.STATE_ON
+            val defaultOn = defaultDisplay?.state == Display.STATE_ON
 
-            val isCoverActive = coverOn || (coverDisplay.state != Display.STATE_OFF && defaultOff)
+            // Only a genuinely ON cover panel counts as active.
+            //
+            // This used to accept any state other than STATE_OFF, which meant STATE_DOZE -- the
+            // always-on clock shown while the phone sits folded in a pocket -- was treated as an
+            // awake cover screen. That kept the WebSocket connected and polled /api/states every
+            // ten seconds indefinitely, precisely when the device should have been idle.
+            val isCoverActive = coverOn && !defaultOn
             _isCoverDisplayActive.value = isCoverActive
 
-            val currentFold = if (coverOn && defaultOff) {
-                DeviceFoldState.FOLDED
-            } else if (defaultDisplay?.state == Display.STATE_ON) {
-                DeviceFoldState.UNFOLDED
-            } else {
-                _foldState.value
+            val currentFold = when {
+                coverOn && !defaultOn -> DeviceFoldState.FOLDED
+                defaultOn -> DeviceFoldState.UNFOLDED
+                else -> _foldState.value   // both panels dark: keep the last known posture
             }
             _foldState.value = currentFold
-
-            Log.d(TAG, "Cover display state: ${coverDisplay.state}, default display state: ${defaultDisplay?.state}, isCoverActive: $isCoverActive")
         } else {
             // If no cover display detected (e.g. standard phone or emulator)
             val isScreenOn = powerManager.isInteractive
@@ -168,5 +177,8 @@ class FoldStateDetector(
 
     companion object {
         private const val TAG = "FoldStateDetector"
+
+        /** Coalescing window for DisplayListener callbacks. */
+        private const val EVALUATE_DEBOUNCE_MS = 300L
     }
 }

@@ -4,6 +4,9 @@ import android.content.Context
 import android.graphics.Point
 import android.hardware.display.DisplayManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.Display
@@ -31,21 +34,51 @@ class CoverDisplayManager(private val context: Context) {
     private val _activeCoverDisplay = MutableStateFlow<Display?>(null)
     val activeCoverDisplay: StateFlow<Display?> = _activeCoverDisplay.asStateFlow()
 
+    /**
+     * Display enumeration is cached briefly.
+     *
+     * [Display] objects re-read their own state from DisplayManagerGlobal on every getter, so
+     * caching the *list* never serves a stale power state -- it only avoids re-asking which
+     * displays exist, which changes far less often than DisplayListener fires.
+     */
+    private var cachedDisplays: List<Display> = emptyList()
+    private var cachedAtUptimeMs: Long = 0L
+
+    private val refreshHandler = Handler(Looper.getMainLooper())
+    private val refreshRunnable = Runnable { refreshDisplays() }
+
+    /**
+     * Coalesces DisplayListener callbacks.
+     *
+     * onDisplayChanged fires on every refresh-rate and brightness change. On a 120 Hz adaptive
+     * panel that is a storm: measured at 20 callbacks in 50 seconds on an idle, screen-off
+     * device, each one previously triggering a full re-enumeration.
+     */
+    private fun scheduleRefresh() {
+        refreshHandler.removeCallbacks(refreshRunnable)
+        refreshHandler.postDelayed(refreshRunnable, REFRESH_DEBOUNCE_MS)
+    }
+
     private val displayListener = object : DisplayManager.DisplayListener {
         override fun onDisplayAdded(displayId: Int) {
-            Log.d(TAG, "Display added: $displayId")
-            refreshDisplays()
+            invalidateCache()
+            scheduleRefresh()
         }
 
         override fun onDisplayRemoved(displayId: Int) {
-            Log.d(TAG, "Display removed: $displayId")
-            refreshDisplays()
+            invalidateCache()
+            scheduleRefresh()
         }
 
         override fun onDisplayChanged(displayId: Int) {
-            Log.d(TAG, "Display changed: $displayId")
-            refreshDisplays()
+            // Deliberately does NOT invalidate the cache: a changed display is still the same
+            // display, and Display objects report fresh state from the cached instances.
+            scheduleRefresh()
         }
+    }
+
+    private fun invalidateCache() {
+        cachedAtUptimeMs = 0L
     }
 
     fun start() {
@@ -54,6 +87,7 @@ class CoverDisplayManager(private val context: Context) {
     }
 
     fun stop() {
+        refreshHandler.removeCallbacks(refreshRunnable)
         try {
             displayManager.unregisterDisplayListener(displayListener)
         } catch (e: Exception) {
@@ -62,20 +96,32 @@ class CoverDisplayManager(private val context: Context) {
     }
 
     fun getAllDisplays(): List<Display> {
+        val now = SystemClock.uptimeMillis()
+        if (cachedDisplays.isNotEmpty() && now - cachedAtUptimeMs < DISPLAY_CACHE_TTL_MS) {
+            return cachedDisplays
+        }
+
         val list = mutableListOf<Display>()
         displayManager.getDisplays(null)?.let { list.addAll(it) }
-        displayManager.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION)?.let { list.addAll(it) }
-        list.addAll(displayManager.displays)
+        val standard = list.distinctBy { it.displayId }
 
-        // Samsung does not surface the cover panel through getDisplays() while it is powered
-        // down, so probe the low logical display ids directly as well. This replaces an earlier
-        // hardcoded getDisplay(1) call: same intent, but without assuming the cover screen is
-        // always display #1 -- and removing the probe entirely made the cover display vanish
-        // from the Displays tab on a real Flip7.
-        for (id in 0 until DISPLAY_ID_PROBE_LIMIT) {
-            displayManager.getDisplay(id)?.let { list.add(it) }
+        // Samsung does not always surface the cover panel through getDisplays() while it is
+        // powered down, so fall back to probing low logical display ids. This is a fallback, not
+        // a default: the probe previously ran unconditionally on every enumeration, which put
+        // eight extra binder calls on a path that fires dozens of times a minute.
+        val needsProbe = standard.none { it.displayId != Display.DEFAULT_DISPLAY }
+        if (needsProbe) {
+            displayManager.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION)
+                ?.let { list.addAll(it) }
+            for (id in 0 until DISPLAY_ID_PROBE_LIMIT) {
+                displayManager.getDisplay(id)?.let { list.add(it) }
+            }
         }
-        return list.distinctBy { it.displayId }
+
+        val resolved = list.distinctBy { it.displayId }
+        cachedDisplays = resolved
+        cachedAtUptimeMs = now
+        return resolved
     }
 
     fun refreshDisplays() {
@@ -109,8 +155,12 @@ class CoverDisplayManager(private val context: Context) {
         }
 
         _displaysFlow.value = infoList
-        _activeCoverDisplay.value = foundCover
-        Log.i(TAG, "Discovered ${displays.size} displays. Cover screen: ${foundCover?.name} (ID: ${foundCover?.displayId})")
+        // Display does not implement equals, so assigning an identical instance would still
+        // re-emit; compare by id to keep this quiet when nothing actually moved.
+        if (_activeCoverDisplay.value?.displayId != foundCover?.displayId) {
+            _activeCoverDisplay.value = foundCover
+            Log.i(TAG, "Cover screen resolved: ${foundCover?.name} (ID: ${foundCover?.displayId})")
+        }
     }
 
     /**
@@ -238,6 +288,12 @@ class CoverDisplayManager(private val context: Context) {
 
         /** Upper bound for the direct getDisplay(id) probe; foldables use very low ids. */
         private const val DISPLAY_ID_PROBE_LIMIT = 8
+
+        /** How long an enumeration stays valid. Display objects still report live state. */
+        private const val DISPLAY_CACHE_TTL_MS = 2_000L
+
+        /** Coalescing window for DisplayListener callbacks. */
+        private const val REFRESH_DEBOUNCE_MS = 300L
 
         /** Substrings that positively identify a foldable's inner cover/sub display. */
         private val COVER_NAME_KEYWORDS = listOf("sub", "cover", "flip", "flex")

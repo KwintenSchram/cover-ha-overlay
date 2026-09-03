@@ -36,6 +36,10 @@ class StatePollingManager(
     }
 
     fun startPolling() {
+        // restartPolling() cancels and relaunches, and the loop fetches immediately before its
+        // first delay -- so calling this repeatedly (the watchdog does, every 15 minutes) used to
+        // fire an extra full state fetch each time.
+        if (isPollingActive && pollingJob?.isActive == true) return
         isPollingActive = true
         restartPolling()
     }

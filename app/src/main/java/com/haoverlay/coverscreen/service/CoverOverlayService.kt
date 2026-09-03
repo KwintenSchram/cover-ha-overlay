@@ -61,6 +61,15 @@ class CoverOverlayService : Service() {
     private var isOverlayAttached = false
     private var isForcedPreview = false
 
+    /**
+     * Whether the realtime socket is currently delivering state.
+     *
+     * Polling is a *fallback* for when it is not. Both used to run concurrently whenever the
+     * cover screen was awake, so every tracked entity was fetched over REST every ten seconds
+     * while the same updates were already arriving over the socket.
+     */
+    private var isWebSocketConnected = false
+
     private val confirmationPendingButtons = ConcurrentHashMap<String, Long>()
     private val cachedEntityStates = ConcurrentHashMap<String, HaEntityState>()
 
@@ -94,10 +103,15 @@ class CoverOverlayService : Service() {
 
         when (action) {
             ACTION_START -> {
-                configManager.setServiceEnabled(true)
+                // The watchdog re-sends ACTION_START every 15 minutes. Writing the same value
+                // back to encrypted prefs on every tick costs a disk write and re-emits
+                // settingsFlow, which rebuilds the overlay view for no reason.
+                if (!configManager.getOverlaySettings().isServiceEnabled) {
+                    configManager.setServiceEnabled(true)
+                }
                 haWebSocket.start()
-                pollingManager.startPolling()
                 foldStateDetector.evaluateCurrentState()
+                startPollingIfSocketIdle()
                 updateOverlayVisibility()
             }
             ACTION_STOP -> {
@@ -224,7 +238,7 @@ class CoverOverlayService : Service() {
                 Log.d(TAG, "isCoverDisplayActive changed: $isActive")
                 if (isActive) {
                     haWebSocket.resume()
-                    pollingManager.startPolling()
+                    startPollingIfSocketIdle()
                 } else {
                     haWebSocket.pause()
                     pollingManager.stopPolling()
@@ -241,7 +255,33 @@ class CoverOverlayService : Service() {
         }
     }
 
+    /**
+     * Starts REST polling only when the socket is not carrying state. Keeping both running was
+     * pure duplication: a full /api/states fetch every interval alongside a live subscription.
+     */
+    private fun startPollingIfSocketIdle() {
+        if (isWebSocketConnected) {
+            pollingManager.stopPolling()
+            return
+        }
+        if (foldStateDetector.isCoverDisplayActive.value || isForcedPreview) {
+            pollingManager.startPolling()
+        }
+    }
+
     private fun observeNetworkStateUpdates() {
+        serviceScope.launch {
+            haWebSocket.connectionStatus.collect { connected ->
+                isWebSocketConnected = connected
+                if (connected) {
+                    Log.d(TAG, "WebSocket connected; stopping fallback polling")
+                    pollingManager.stopPolling()
+                } else {
+                    startPollingIfSocketIdle()
+                }
+            }
+        }
+
         serviceScope.launch {
             haWebSocket.stateUpdates.collect { state ->
                 cachedEntityStates[state.entityId] = state
