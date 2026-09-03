@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.1] - 2026-09-03
+
+### Fixed
+
+Battery. Measured on a Galaxy Z Flip7 over one day on battery, the app was the
+device's largest mobile-radio consumer: **101 mAh across 26,715 packets** -- about
+20% of all radio drain on the phone, and ~2.4% of total battery from radio alone.
+26,715 packets is almost exactly 8,640 requests (one every ten seconds, all day)
+times three packets, sent over mobile data while the phone sat folded in a pocket.
+
+- **A dozing cover screen counted as awake.** The rule accepted any display state
+  other than `STATE_OFF`, which includes `STATE_DOZE` -- the always-on clock shown
+  while the phone is folded and idle. The app therefore kept its WebSocket open and
+  polled `/api/states` every ten seconds indefinitely, precisely when the device
+  should have been asleep. Only a genuinely `STATE_ON` cover panel with a dark main
+  panel now counts as active.
+- **Polling ran alongside the WebSocket instead of as a fallback.** Both started
+  whenever the cover screen was awake, so every entity was fetched over REST on a
+  timer while the same updates already arrived over the socket. Polling is now driven
+  by the socket's connection status and stops entirely while it is connected.
+- `startPolling()` is idempotent; it previously cancelled and relaunched the loop,
+  which fetches immediately, so each watchdog tick caused an extra full fetch.
+- `ACTION_START` no longer rewrites preferences on every watchdog tick.
+- Display enumeration is cached and its listeners coalesced. Measured CPU was
+  identical before and after (~0.13% of one core), so this is a correctness cleanup
+  rather than a battery fix -- it also reverts an unconditional eight-id probe
+  introduced in 4b33ed3.
+
+For the record, the watchdog was **not** a factor: 189 ms of wakelock across 23
+firings in a day.
+
 ## [1.2.0] - 2026-09-02
 
 ### Added
