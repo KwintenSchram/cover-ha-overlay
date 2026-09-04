@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.2] - 2026-09-04
+
+### Fixed
+
+The 1.2.1 battery fix was incomplete, and on a per-hour basis it made things worse.
+Normalised against Android's own accounting:
+
+| | v1.2.0 (24h 57m) | v1.2.1 (9h 49m) |
+| :--- | ---: | ---: |
+| App mobile-radio | 101 mAh | 172 mAh |
+| Per hour | 4.0 mAh/h | **17.5 mAh/h** |
+| Share of device radio | 19% | **68%** |
+
+The absolute figure looked smaller only because the measurement window was 2.5x
+shorter. Two causes, both now fixed:
+
+- **The watchdog held the socket open around the clock.** `HomeAssistantWebSocket.start()`
+  cleared the paused flag and dialled immediately, with no reference to the cover
+  screen. `ACTION_START` called it, and the watchdog re-sends `ACTION_START` every 15
+  minutes -- so the socket was reconnected regardless of posture. Nothing took it back
+  down, because `isCoverDisplayActive` is a `StateFlow` and its value had not *changed*,
+  so the collector never re-emitted. 1.2.1 stopped the polling and left this running.
+  `start()` no longer connects; the socket now follows the cover screen through
+  `resume()`/`pause()` alone, applied from a single place in the service.
+- **The subscription was unfiltered.** `subscribe_events` for `state_changed` asks Home
+  Assistant to push *every* state change in the entire instance -- every sensor, power
+  meter and thermostat reading -- to a phone showing three buttons. The client now sends
+  a `subscribe_trigger` naming exactly the entities it displays, so filtering happens
+  server-side and nothing else crosses the network. Older Home Assistant versions that
+  reject `subscribe_trigger` fall back to the unfiltered subscription, with client-side
+  filtering so untracked entities no longer wake collectors.
+
+Verified on device against a live Home Assistant: enabling the overlay logs
+`Subscribing to 3 entities` and stops the fallback poller; disabling it closes the
+socket cleanly. Six new protocol tests cover the handshake, the filtered subscription,
+the empty-entity case, the fallback path, and that `start()` opens no connection.
+
+66 tests, 0 failures.
+
 ## [1.2.1] - 2026-09-03
 
 ### Fixed

@@ -111,7 +111,11 @@ class CoverOverlayService : Service() {
                 }
                 haWebSocket.start()
                 foldStateDetector.evaluateCurrentState()
-                startPollingIfSocketIdle()
+                // Apply the posture explicitly. isCoverDisplayActive is a StateFlow, so if the
+                // value has not *changed* the collector does not re-emit -- which previously meant
+                // a watchdog-triggered ACTION_START could bring the socket up with nothing left to
+                // take it down again.
+                applyNetworkStateForPosture(foldStateDetector.isCoverDisplayActive.value)
                 updateOverlayVisibility()
             }
             ACTION_STOP -> {
@@ -130,6 +134,7 @@ class CoverOverlayService : Service() {
             }
             ACTION_TEST_OVERLAY -> {
                 isForcedPreview = intent?.getBooleanExtra(EXTRA_FORCED_PREVIEW, false) ?: false
+                applyNetworkStateForPosture(foldStateDetector.isCoverDisplayActive.value)
                 updateOverlayVisibility()
             }
         }
@@ -220,7 +225,10 @@ class CoverOverlayService : Service() {
                     btn.guardSensorEntityId?.let { if (it.isNotBlank()) entityIds.add(it) }
                     btn.targetLockEntityId?.let { if (it.isNotBlank()) entityIds.add(it) }
                 }
-                pollingManager.updateTrackedEntities(entityIds.distinct(), configManager.getHaConfig().pollIntervalSeconds)
+                val tracked = entityIds.distinct()
+                pollingManager.updateTrackedEntities(tracked, configManager.getHaConfig().pollIntervalSeconds)
+                // The socket subscribes to exactly these entities server-side.
+                haWebSocket.updateTrackedEntities(tracked)
             }
         }
 
@@ -236,13 +244,7 @@ class CoverOverlayService : Service() {
         serviceScope.launch {
             foldStateDetector.isCoverDisplayActive.collectLatest { isActive ->
                 Log.d(TAG, "isCoverDisplayActive changed: $isActive")
-                if (isActive) {
-                    haWebSocket.resume()
-                    startPollingIfSocketIdle()
-                } else {
-                    haWebSocket.pause()
-                    pollingManager.stopPolling()
-                }
+                applyNetworkStateForPosture(isActive)
                 updateOverlayVisibility()
             }
         }
@@ -252,6 +254,22 @@ class CoverOverlayService : Service() {
                 Log.d(TAG, "foldState changed: $foldState")
                 updateOverlayVisibility()
             }
+        }
+    }
+
+    /**
+     * The single place that decides whether this service should be talking to Home Assistant.
+     *
+     * Nothing else may connect the socket: driving it from anywhere other than the cover-screen
+     * posture is how it previously ended up connected around the clock.
+     */
+    private fun applyNetworkStateForPosture(isCoverActive: Boolean) {
+        if (isCoverActive || isForcedPreview) {
+            haWebSocket.resume()
+            startPollingIfSocketIdle()
+        } else {
+            haWebSocket.pause()
+            pollingManager.stopPolling()
         }
     }
 

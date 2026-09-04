@@ -2,6 +2,7 @@ package com.haoverlay.coverscreen.network
 
 import android.util.Log
 import com.google.gson.Gson
+import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.haoverlay.coverscreen.data.model.HaConfig
@@ -44,6 +45,22 @@ class HomeAssistantWebSocket(
     private var isAuthRejected = false
     private var reconnectAttempts = 0
 
+    /**
+     * Entities this client actually cares about.
+     *
+     * The subscription used to be an unfiltered `subscribe_events` for `state_changed`, which asks
+     * Home Assistant to push *every* state change in the whole instance -- every sensor, power
+     * meter and thermostat reading -- to a phone that displays three buttons. Over mobile data
+     * that alone kept the radio busy.
+     */
+    private var trackedEntityIds: List<String> = emptyList()
+
+    /** Id of the outstanding subscribe request, so its result can be matched. */
+    private var subscriptionId: Int? = null
+
+    /** Set once we have fallen back to the unfiltered subscription on an older Home Assistant. */
+    private var usingLegacySubscription = false
+
     private val messageIdCounter = AtomicInteger(1)
     private var reconnectJob: Job? = null
 
@@ -62,6 +79,19 @@ class HomeAssistantWebSocket(
         .pingInterval(30, TimeUnit.SECONDS)
         .build()
 
+    /**
+     * Sets the entities to subscribe to. Re-subscribes immediately when already connected.
+     * With an empty list the client subscribes to nothing at all rather than to everything.
+     */
+    fun updateTrackedEntities(entityIds: List<String>) {
+        val normalised = entityIds.filter { it.isNotBlank() }.distinct().sorted()
+        if (normalised == trackedEntityIds) return
+        trackedEntityIds = normalised
+        if (isConnected) {
+            webSocket?.let { subscribeToTrackedEntities(it) }
+        }
+    }
+
     fun updateConfig(newConfig: HaConfig) {
         val changed = config.cleanBaseUrl != newConfig.cleanBaseUrl || config.accessToken != newConfig.accessToken
         this.config = newConfig
@@ -76,11 +106,17 @@ class HomeAssistantWebSocket(
         }
     }
 
+    /**
+     * Allows connecting, but does not connect by itself.
+     *
+     * This used to clear [isPaused] and dial immediately. The watchdog re-sends ACTION_START every
+     * 15 minutes, so that reconnected the socket regardless of whether the cover screen was awake
+     * -- and because isCoverDisplayActive is a StateFlow whose value had not *changed*, nothing
+     * ever emitted to pause it again. The socket then stayed up indefinitely. Connecting is now
+     * driven solely by [resume] and [pause], which follow the cover screen.
+     */
     fun start() {
-        isPaused = false
-        if (webSocket == null && canConnect()) {
-            connect()
-        }
+        // Intentionally does not connect. See resume().
     }
 
     fun pause() {
@@ -127,6 +163,7 @@ class HomeAssistantWebSocket(
         }
         webSocket = null
         isConnected = false
+        subscriptionId = null
         _connectionStatus.tryEmit(false)
     }
 
@@ -208,7 +245,7 @@ class HomeAssistantWebSocket(
                     reconnectAttempts = 0
                     _connectionStatus.tryEmit(true)
                     _authRejected.tryEmit(false)
-                    subscribeStateChanges(ws)
+                    subscribeToTrackedEntities(ws)
                 }
                 "auth_invalid" -> {
                     Log.e(
@@ -225,13 +262,38 @@ class HomeAssistantWebSocket(
                 }
                 "event" -> {
                     val eventObj = json.getAsJsonObject("event")
-                    if (eventObj != null && eventObj.get("event_type")?.asString == "state_changed") {
-                        val dataObj = eventObj.getAsJsonObject("data")
-                        val newStateObj = dataObj?.getAsJsonObject("new_state")
-                        if (newStateObj != null) {
-                            val entityState = gson.fromJson(newStateObj, HaEntityState::class.java)
+
+                    // subscribe_trigger delivers the new state under variables.trigger.to_state.
+                    val toState = eventObj
+                        ?.getAsJsonObject("variables")
+                        ?.getAsJsonObject("trigger")
+                        ?.getAsJsonObject("to_state")
+
+                    val newStateObj = toState
+                        ?: if (eventObj?.get("event_type")?.asString == "state_changed") {
+                            // Unfiltered fallback shape.
+                            eventObj.getAsJsonObject("data")?.getAsJsonObject("new_state")
+                        } else {
+                            null
+                        }
+
+                    if (newStateObj != null) {
+                        val entityState = gson.fromJson(newStateObj, HaEntityState::class.java)
+                        // On the fallback path everything in the instance arrives, so drop what
+                        // this client does not display rather than waking collectors for it.
+                        if (trackedEntityIds.isEmpty() || entityState.entityId in trackedEntityIds) {
                             _stateUpdates.tryEmit(entityState)
                         }
+                    }
+                }
+
+                "result" -> {
+                    val resultId = json.get("id")?.asInt
+                    val succeeded = json.get("success")?.asBoolean ?: true
+                    if (resultId != null && resultId == subscriptionId && !succeeded &&
+                        !usingLegacySubscription
+                    ) {
+                        subscribeAllStateChanges(ws)
                     }
                 }
             }
@@ -240,14 +302,47 @@ class HomeAssistantWebSocket(
         }
     }
 
-    private fun subscribeStateChanges(ws: WebSocket) {
+    /**
+     * Subscribes to state changes for [trackedEntityIds] only, using a `state` trigger so that
+     * Home Assistant does the filtering server-side and nothing else crosses the network.
+     */
+    private fun subscribeToTrackedEntities(ws: WebSocket) {
+        if (trackedEntityIds.isEmpty()) {
+            Log.d(TAG, "No tracked entities; not subscribing")
+            subscriptionId = null
+            return
+        }
+
         val id = messageIdCounter.getAndIncrement()
-        val subMsg = JsonObject().apply {
+        subscriptionId = id
+        val message = JsonObject().apply {
+            addProperty("id", id)
+            addProperty("type", "subscribe_trigger")
+            add("trigger", JsonObject().apply {
+                addProperty("platform", "state")
+                add("entity_id", JsonArray().apply { trackedEntityIds.forEach { add(it) } })
+            })
+        }
+        Log.i(TAG, "Subscribing to ${trackedEntityIds.size} entities")
+        ws.send(message.toString())
+    }
+
+    /**
+     * Unfiltered fallback for Home Assistant versions without `subscribe_trigger`. Every state
+     * change in the instance arrives and is filtered on the device, so this is the expensive path
+     * and is only taken when the server rejects the filtered subscription.
+     */
+    private fun subscribeAllStateChanges(ws: WebSocket) {
+        usingLegacySubscription = true
+        val id = messageIdCounter.getAndIncrement()
+        subscriptionId = id
+        val message = JsonObject().apply {
             addProperty("id", id)
             addProperty("type", "subscribe_events")
             addProperty("event_type", "state_changed")
         }
-        ws.send(subMsg.toString())
+        Log.w(TAG, "subscribe_trigger unavailable; falling back to unfiltered state_changed")
+        ws.send(message.toString())
     }
 
     companion object {
