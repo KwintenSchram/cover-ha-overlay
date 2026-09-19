@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.3] - 2026-09-19
+
+### Fixed
+
+- **Forced live fetch for guard and lock sensors before action execution.** When an action button configured with a guard binary sensor (e.g. optical hallway / pet safety guard) or lock confirmation guard was tapped, the app previously relied solely on cached entity states without an immediate refresh. If the WebSocket connection had been paused while the phone was unfolded or an event had not arrived yet, the action could evaluate a stale sensor state. The overlay service now forces a live REST pull to Home Assistant before evaluating guard conditions, displays an immediate loading spinner on the button during the fetch, and falls back to cached state only if the network call fails or times out.
+- **Initial attach guard warmup.** Initial REST state query upon overlay attachment now also queries and caches configured `guardSensorEntityId` and `targetLockEntityId` entities alongside primary button entities.
+
 ## [1.2.2] - 2026-09-04
 
 ### Fixed

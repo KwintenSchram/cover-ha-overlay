@@ -368,12 +368,27 @@ class CoverOverlayService : Service() {
             isOverlayAttached = true
             Log.i(TAG, "Overlay successfully attached to display #${targetDisplay.displayId} (${targetDisplay.name})")
 
-            // Initial state poll for all buttons
+            // Initial state poll for all buttons and their guard entities
             serviceScope.launch {
                 for (button in buttons) {
                     if (button.entityId.isNotBlank()) {
                         when (val res = haClient.fetchEntityState(button.entityId)) {
-                            is HaResult.Success -> overlayView?.updateEntityState(button.entityId, res.data)
+                            is HaResult.Success -> {
+                                cachedEntityStates[button.entityId] = res.data
+                                overlayView?.updateEntityState(button.entityId, res.data)
+                            }
+                            else -> Unit
+                        }
+                    }
+                    button.guardSensorEntityId?.takeIf { it.isNotBlank() }?.let { guardId ->
+                        when (val res = haClient.fetchEntityState(guardId)) {
+                            is HaResult.Success -> cachedEntityStates[guardId] = res.data
+                            else -> Unit
+                        }
+                    }
+                    button.targetLockEntityId?.takeIf { it.isNotBlank() }?.let { lockId ->
+                        when (val res = haClient.fetchEntityState(lockId)) {
+                            is HaResult.Success -> cachedEntityStates[lockId] = res.data
                             else -> Unit
                         }
                     }
@@ -537,17 +552,21 @@ class CoverOverlayService : Service() {
         if (!button.guardSensorEntityId.isNullOrBlank()) {
             val guardSensorId = button.guardSensorEntityId
             serviceScope.launch {
-                val sensorState = cachedEntityStates[guardSensorId]?.state ?: withContext(Dispatchers.IO) {
-                    val res = haClient.fetchEntityState(guardSensorId)
-                    if (res is HaResult.Success) {
-                        cachedEntityStates[guardSensorId] = res.data
-                        res.data.state
-                    } else {
-                        "off"
-                    }
+                overlayView?.setButtonLoading(button.id, true)
+
+                val liveResult = withContext(Dispatchers.IO) {
+                    haClient.fetchEntityState(guardSensorId)
+                }
+
+                val sensorState = if (liveResult is HaResult.Success) {
+                    cachedEntityStates[guardSensorId] = liveResult.data
+                    liveResult.data.state
+                } else {
+                    cachedEntityStates[guardSensorId]?.state ?: "off"
                 }
 
                 if (sensorState.equals(button.guardTriggerState, ignoreCase = true)) {
+                    overlayView?.setButtonLoading(button.id, false)
                     Log.w(TAG, "Guard sensor '$guardSensorId' is '$sensorState'! Triggering warning vibration & ${button.guardConfirmationWindowMs}ms confirmation window.")
                     confirmationPendingButtons[button.id] = System.currentTimeMillis() + button.guardConfirmationWindowMs
                     overlayView?.triggerWarningVibration()
@@ -569,17 +588,21 @@ class CoverOverlayService : Service() {
         if (button.requireConfirmationWhenLocked) {
             val lockEntityId = button.targetLockEntityId?.ifBlank { null } ?: button.entityId
             serviceScope.launch {
-                val lockState = cachedEntityStates[lockEntityId]?.state ?: withContext(Dispatchers.IO) {
-                    val res = haClient.fetchEntityState(lockEntityId)
-                    if (res is HaResult.Success) {
-                        cachedEntityStates[lockEntityId] = res.data
-                        res.data.state
-                    } else {
-                        "unlocked"
-                    }
+                overlayView?.setButtonLoading(button.id, true)
+
+                val liveResult = withContext(Dispatchers.IO) {
+                    haClient.fetchEntityState(lockEntityId)
+                }
+
+                val lockState = if (liveResult is HaResult.Success) {
+                    cachedEntityStates[lockEntityId] = liveResult.data
+                    liveResult.data.state
+                } else {
+                    cachedEntityStates[lockEntityId]?.state ?: "unlocked"
                 }
 
                 if (lockState.equals("locked", ignoreCase = true)) {
+                    overlayView?.setButtonLoading(button.id, false)
                     val confirmWindowMs = 8000L // 8 seconds confirmation window
                     Log.w(TAG, "Lock entity '$lockEntityId' is LOCKED! Requiring confirmation tap before unlatching.")
                     confirmationPendingButtons[button.id] = System.currentTimeMillis() + confirmWindowMs
